@@ -3,6 +3,13 @@ package com.crossmint.challenge.model;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import lombok.NonNull;
 
+/**
+ * The {@code AstralObject} class represents an abstract model for various astral entities
+ * that exist within a {@link SpaceCell}. This serves as a base class to define common
+ * behavior and properties for specific astral objects, such as Polyanets, Sooloons, and Comeths.
+ * Each astral object is associated with a specific {@link SpaceCell} instance and
+ * requires subclasses to implement specific properties and methods.
+ */
 public abstract class AstralObject {
 
     @NonNull
@@ -13,6 +20,7 @@ public abstract class AstralObject {
         this.spaceCell = spaceCell;
     }
 
+    //These methods are actually being used by the json mapper
     @SuppressWarnings("unused")
     public @NonNull String getCandidateId() {
         return spaceCell.getMegaverse().candidateId();

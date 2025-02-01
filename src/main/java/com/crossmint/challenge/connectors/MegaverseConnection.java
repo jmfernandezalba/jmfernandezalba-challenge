@@ -21,14 +21,30 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Handles the connection to the Megaverse API for a certain candidate.
+ * The {@code MegaverseConnection} class provides methods for interacting with a remote API
+ * that manages the state and structure of a Megaverse. The class facilitates operations such as
+ * publishing astral objects within the Megaverse or retrieving goal matrices to construct a Megaverse representation.
+ * <p>
+ * The class enforces retry mechanisms for API interactions to handle rate-limiting scenarios, providing a robust
+ * mechanism for communication with the remote endpoints.
  */
 public class MegaverseConnection {
 
     public static final URI API_ROOT = URI.create("https://challenge.crossmint.io/api/");
     public static final String GOAL_ENDPOINT_FORMAT = "map/%s/goal";
 
-    public static final int RETRY_DELAY_MS = 8000;
+    public static final int MAX_RETRIES = 15;
+    public static final int MIN_RETRY_DELAY_MS = 8000;
+
+    private static void tooManyRequestsHandler(HttpResponse<String> response, Throwable error) {
+        if (response.statusCode() == 429) {
+            String errorMsg = "Too many requests: " + response + " -> " + response.body();
+            System.err.println(errorMsg);
+            throw new UncheckedIOException(new IOException(errorMsg));
+        } else if (error == null && response.statusCode() / 100 == 2) {
+            System.out.println("Success: " + response);
+        }
+    }
 
     @NonNull
     private final String candidateId;
@@ -38,60 +54,74 @@ public class MegaverseConnection {
     }
 
     /**
-     * Publishes the provided astralObject to the Megaverse API using the specified client.
+     * Attempts to send an HTTP request using an asynchronous HTTP client with retry logic.
+     * The method will retry the request up to a maximum number of retries if an exception occurs or
+     * a failure response is received. Random delays are introduced between retries.
+     * Each retry respects a minimum delay interval.
      *
-     * @param httpClient   the HttpClient to send the request.
-     * @param astralObject the AstralObject to publish.
-     * @return the Future result of the request.
+     * @param httpClient the instance of {@link HttpClient} used to send the HTTP request asynchronously.
+     * @param request    the {@link HttpRequest} to be sent to the server.
+     * @return a {@link CompletableFuture} representing the eventual completion of the HTTP request,
+     * which contains the {@link HttpResponse} or a failure.
      */
-    private CompletableFuture<HttpResponse<String>> publishWithRetry(HttpClient httpClient, AstralObject astralObject) {
+    private CompletableFuture<HttpResponse<String>> sendWithRetries(HttpClient httpClient, HttpRequest request) {
 
-        try {
-            ObjectMapper jsonMapper = new ObjectMapper();
-            String jsonBody = jsonMapper.writeValueAsString(astralObject);
+        CompletableFuture<HttpResponse<String>> futureResponse = httpClient.sendAsync(request, HttpResponse.BodyHandlers.ofString())
+            .whenCompleteAsync(MegaverseConnection::tooManyRequestsHandler);
 
-            HttpRequest request = HttpRequest.newBuilder()
-                .uri(API_ROOT.resolve(astralObject.endpoint()))
-                .header("Content-Type", "application/json")
-                .POST(HttpRequest.BodyPublishers.ofString(jsonBody))
-                .build();
-
-            return httpClient.sendAsync(request, HttpResponse.BodyHandlers.ofString())
-
-                // Fail the stage if the server responds with 429
-                .whenCompleteAsync((response, _) -> {
-                    if (response.statusCode() == 429) {
-                        String errorMsg = "Too many requests: " + response + " -> " + response.body();
-                        System.err.println(errorMsg);
-                        throw new UncheckedIOException(new IOException(errorMsg));
-                    }
-                })
-
-                // Retry once after certain delay if the stage failed
-                .exceptionallyComposeAsync(
-                    _ -> httpClient.sendAsync(request, HttpResponse.BodyHandlers.ofString()),
-                    CompletableFuture.delayedExecutor(RETRY_DELAY_MS, TimeUnit.MILLISECONDS))
-
-                // Fail the stage if error the second time
-                .whenCompleteAsync((response, _) -> {
-                    if (response.statusCode() == 429) {
-                        String errorMsg = "Too many requests: " + response + " -> " + response.body();
-                        System.err.println(errorMsg);
-                        throw new UncheckedIOException(new IOException(errorMsg));
-                    }
-                });
-
-        } catch (JsonProcessingException e) {
-            throw new IllegalArgumentException("Could not parse astralObject: " + astralObject);
+        for (int i = 0; i < MAX_RETRIES; ++i) {
+            futureResponse = futureResponse.exceptionallyComposeAsync(
+                _ -> {
+                    System.out.println("Retrying... " + request);
+                    return httpClient.sendAsync(request, HttpResponse.BodyHandlers.ofString())
+                        .whenCompleteAsync(MegaverseConnection::tooManyRequestsHandler);
+                },
+                //Random delay for each retry
+                CompletableFuture.delayedExecutor(MIN_RETRY_DELAY_MS + Math.round(MIN_RETRY_DELAY_MS * Math.random()), TimeUnit.MILLISECONDS));
         }
+
+        return futureResponse;
     }
 
     /**
-     * Publishes the state of the provided megaverse to the Megaverse API.
+     * Publishes the provided astral object by sending an HTTP POST request with the object's data serialized as JSON.
+     * This method constructs the HTTP request using the astral object's endpoint and invokes the retry logic for
+     * sending the request asynchronously.
      *
-     * @param megaverse the megaverse to publish.
-     * @throws InterruptedException if some thread was interrupted while publishing the state.
-     * @throws IOException          if there was some error while publishing the state.
+     * @param httpClient   the {@link HttpClient} instance used to send the HTTP request asynchronously.
+     * @param astralObject the {@link AstralObject} containing the data to be published and its destination endpoint.
+     * @return a {@link CompletableFuture} that represents the eventual completion of the HTTP request,
+     * containing the {@link HttpResponse} with the server's response or an exceptional state if the request fails.
+     * @throws IllegalArgumentException if the astral object cannot be serialized to JSON.
+     */
+    private CompletableFuture<HttpResponse<String>> publishAstralObject(HttpClient httpClient, AstralObject astralObject) {
+
+        String jsonBody;
+        try {
+            ObjectMapper jsonMapper = new ObjectMapper();
+            jsonBody = jsonMapper.writeValueAsString(astralObject);
+        } catch (JsonProcessingException e) {
+            throw new IllegalArgumentException("Could not parse astralObject: " + astralObject);
+        }
+
+        HttpRequest request = HttpRequest.newBuilder()
+            .uri(API_ROOT.resolve(astralObject.endpoint()))
+            .header("Content-Type", "application/json")
+            .POST(HttpRequest.BodyPublishers.ofString(jsonBody))
+            .build();
+
+        return sendWithRetries(httpClient, request);
+    }
+
+    /**
+     * Publishes the state of all astral objects within a given Megaverse. This method iterates
+     * over each {@link SpaceCell} in the Megaverse, identifies cells with astral objects, and
+     * attempts to publish the objects to their respective endpoints using the helper method
+     * {@code publishWithRetry}.
+     *
+     * @param megaverse the {@link Megaverse} instance containing the space cells and astral objects to be published.
+     * @throws InterruptedException if interrupted while waiting for the publishing process to complete.
+     * @throws IOException          if a failure occurs during the publishing process or if the HTTP client fails.
      */
     public void publishState(@NonNull Megaverse megaverse) throws InterruptedException, IOException {
 
@@ -104,7 +134,7 @@ public class MegaverseConnection {
             for (SpaceCell[] row : megaverse.spaceCells()) {
                 for (SpaceCell cell : row) {
                     cell.getAstralObject().ifPresent(
-                        astralObject -> allPublishResults.add(publishWithRetry(httpClient, astralObject)));
+                        astralObject -> allPublishResults.add(publishAstralObject(httpClient, astralObject)));
                 }
             }
 
@@ -119,11 +149,13 @@ public class MegaverseConnection {
     }
 
     /**
-     * Reads the goal for the current challenge from the Megaverse API.
+     * Retrieves and parses a goal matrix from a remote API, converting it into a {@link Megaverse} instance.
+     * This method sends an HTTP GET request to a specified endpoint, processes the JSON response, and
+     * constructs a {@link Megaverse} populated with {@link SpaceCell} objects.
      *
-     * @return the goal Megaverse returned from the Megaverse API.
-     * @throws InterruptedException if the thread was interrupted while reading the API.
-     * @throws IOException          if there was an error reading the API.
+     * @return a {@link Megaverse} instance built from the retrieved goal matrix.
+     * @throws InterruptedException if the thread is interrupted during the HTTP request or response processing.
+     * @throws IOException          if an I/O error occurs during the HTTP request or while processing the response.
      */
     public @NonNull Megaverse readGoal() throws InterruptedException, IOException {
 

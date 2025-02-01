@@ -11,6 +11,13 @@ import java.util.Optional;
 @JsonInclude(JsonInclude.Include.NON_EMPTY)
 public class SpaceCell {
 
+    /**
+     * A constant representing the name of the "SPACE" object type.
+     * This is used to uniquely identify empty or unoccupied SpaceCells within the system.
+     * The value is "SPACE".
+     */
+    public static final String OBJECT_NAME = "SPACE";
+
     @NonNull
     @JsonIgnore
     private final Megaverse megaverse;
@@ -25,11 +32,7 @@ public class SpaceCell {
     }
 
     public SpaceCell fillFromString(String objectStr) {
-        switch (objectStr) {
-            case "SPACE" -> astralObject = null;
-            case "POLYANET" -> astralObject = new Polyanet(this);
-            default -> throw new IllegalArgumentException("Unexpected value: " + objectStr);
-        }
+        astralObject = AstralObjects.fromString(objectStr, this);
         return this;
     }
 
@@ -41,7 +44,7 @@ public class SpaceCell {
         if (astralObject != null) {
             return astralObject.toString();
         } else {
-            return "_SPACE__";
+            return String.format("%-13s", OBJECT_NAME);
         }
     }
 }
