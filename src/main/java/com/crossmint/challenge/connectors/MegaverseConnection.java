@@ -47,6 +47,10 @@ public class MegaverseConnection {
         this.candidateId = "";
     }
 
+    public MegaverseConnection(@NonNull String candidateId) {
+        this.candidateId = candidateId;
+    }
+
     /**
      * Processes the 429 response to throw an exception so we can retry. Other non 2xx return messages (like 5xx) do not throw
      * exceptions and hence are not retried.
@@ -67,9 +71,6 @@ public class MegaverseConnection {
         }
     }
 
-    public MegaverseConnection(@NonNull String candidateId) {
-        this.candidateId = candidateId;
-    }
 
     HttpClient buildHttpClient() {
         return HttpClient.newBuilder()
@@ -155,10 +156,9 @@ public class MegaverseConnection {
      * {@code sendWithRetries}.
      *
      * @param megaverse the {@link Megaverse} instance containing the space cells and astral objects to be published.
-     * @throws InterruptedException if interrupted while waiting for the publishing process to complete.
      * @throws IOException          if a failure occurs during the publishing process or if the HTTP client fails.
      */
-    public void publishState(@NonNull Megaverse megaverse) throws InterruptedException, IOException {
+    public void publishState(@NonNull Megaverse megaverse) throws IOException {
 
         try (HttpClient httpClient = buildHttpClient()) {
 
@@ -191,10 +191,9 @@ public class MegaverseConnection {
      * constructs a {@link Megaverse} populated with {@link SpaceCell} objects.
      *
      * @return a {@link Megaverse} instance built from the retrieved goal matrix.
-     * @throws InterruptedException if the thread is interrupted during the HTTP request or response processing.
      * @throws IOException          if an I/O error occurs during the HTTP request or while processing the response.
      */
-    public @NonNull Megaverse readGoal() throws InterruptedException, IOException {
+    public @NonNull Megaverse readGoal() throws IOException {
 
         try (HttpClient httpClient = buildHttpClient()) {
 

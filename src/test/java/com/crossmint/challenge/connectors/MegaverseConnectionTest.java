@@ -15,7 +15,6 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ExecutionException;
 
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.*;
@@ -49,7 +48,7 @@ public class MegaverseConnectionTest {
     }
 
     @Test
-    public void testPublishStatePostsCorrectly() throws IOException, InterruptedException {
+    public void testPublishStatePostsCorrectly() throws IOException {
         // Arrange: Define the input parameters and mocks.
         Megaverse dummyMegaverse = buildDummyMegaverse();
         AstralObject dummyObject = dummyMegaverse.spaceCells()[0][1].getAstralObject().orElse(null);
@@ -90,7 +89,7 @@ public class MegaverseConnectionTest {
     }
 
     @Test
-    public void testPublishStateRetriesOnError() throws IOException, InterruptedException, ExecutionException {
+    public void testPublishStateRetriesOnError() throws IOException {
         // Arrange: Define the input parameters and mocks.
         Megaverse dummyMegaverse = buildDummyMegaverse();
         AstralObject dummyObject = dummyMegaverse.spaceCells()[0][1].getAstralObject().orElse(null);
@@ -114,7 +113,7 @@ public class MegaverseConnectionTest {
     }
 
     @Test
-    public void testPublishStateRetriesOn429Error() throws IOException, InterruptedException, ExecutionException {
+    public void testPublishStateRetriesOn429Error() throws IOException {
         // Arrange: Define the input parameters and mocks.
         Megaverse dummyMegaverse = buildDummyMegaverse();
         AstralObject dummyObject = dummyMegaverse.spaceCells()[0][1].getAstralObject().orElse(null);

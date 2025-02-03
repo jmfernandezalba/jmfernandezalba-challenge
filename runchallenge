@@ -1,0 +1,4 @@
+#!/bin/bash
+script_dir=$(dirname "${BASH_SOURCE[0]}")
+cd "${script_dir}" || exit
+./mvnw compile exec:java 2> >(sed $'s,.*,\e[31m&\e[m,'>&2)
