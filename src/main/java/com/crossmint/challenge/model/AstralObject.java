@@ -20,7 +20,7 @@ public abstract class AstralObject {
         this.spaceCell = spaceCell;
     }
 
-    //These methods are actually being used by the json mapper
+    //These methods are actually being used by the json mapper, that's why I suppress the warnings.
     @SuppressWarnings("unused")
     public @NonNull String getCandidateId() {
         return spaceCell.getMegaverse().candidateId();

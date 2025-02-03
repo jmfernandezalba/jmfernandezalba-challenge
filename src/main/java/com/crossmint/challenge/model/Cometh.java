@@ -27,6 +27,6 @@ public class Cometh extends AstralObject {
     }
 
     public String toString() {
-        return String.format("%-13s", direction + "_" + OBJECT_NAME);
+        return String.format("%-13s", direction.toString().toUpperCase() + "_" + OBJECT_NAME);
     }
 }

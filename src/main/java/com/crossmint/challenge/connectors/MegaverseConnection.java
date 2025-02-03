@@ -7,6 +7,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.NonNull;
+import lombok.Setter;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -15,9 +16,10 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.util.LinkedList;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ExecutionException;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -28,29 +30,74 @@ import java.util.concurrent.TimeUnit;
  * The class enforces retry mechanisms for API interactions to handle rate-limiting scenarios, providing a robust
  * mechanism for communication with the remote endpoints.
  */
+@Setter
 public class MegaverseConnection {
 
     public static final URI API_ROOT = URI.create("https://challenge.crossmint.io/api/");
     public static final String GOAL_ENDPOINT_FORMAT = "map/%s/goal";
 
-    public static final int MAX_RETRIES = 15;
+    public static final int MAX_RETRIES = 10;
     public static final int MIN_RETRY_DELAY_MS = 8000;
+    @NonNull
+    private String candidateId;
 
+    // This is being used by the tests mocks
+    @SuppressWarnings("unused")
+    public MegaverseConnection() {
+        this.candidateId = "";
+    }
+
+    /**
+     * Processes the 429 response to throw an exception so we can retry. Other non 2xx return messages (like 5xx) do not throw
+     * exceptions and hence are not retried.
+     *
+     * @param response the response from the server.
+     * @param error    the error thrown by the http client.
+     */
     private static void tooManyRequestsHandler(HttpResponse<String> response, Throwable error) {
-        if (response.statusCode() == 429) {
-            String errorMsg = "Too many requests: " + response + " -> " + response.body();
-            System.err.println(errorMsg);
-            throw new UncheckedIOException(new IOException(errorMsg));
-        } else if (error == null && response.statusCode() / 100 == 2) {
-            System.out.println("Success: " + response);
+        if (error == null) {
+            int statusCode = response.statusCode();
+            if (statusCode / 100 == 2) {
+                System.out.println("SUCCESS " + response + " <- " + LoggingUtils.extractBodyFromRequest(response.request()));
+            } else if (statusCode == 429) {
+                String errorMsg = "FAILURE " + response + " <- " + LoggingUtils.extractBodyFromRequest(response.request());
+                System.err.println(errorMsg);
+                throw new UncheckedIOException(new IOException(errorMsg));
+            }
         }
     }
 
-    @NonNull
-    private final String candidateId;
-
     public MegaverseConnection(@NonNull String candidateId) {
         this.candidateId = candidateId;
+    }
+
+    HttpClient buildHttpClient() {
+        return HttpClient.newBuilder()
+            .followRedirects(HttpClient.Redirect.NORMAL)
+            .build();
+    }
+
+    HttpRequest buildGoalRequest() {
+        return HttpRequest.newBuilder()
+            .uri(API_ROOT.resolve(String.format(GOAL_ENDPOINT_FORMAT, candidateId)))
+            .build();
+    }
+
+    HttpRequest buildPOSTRequest(AstralObject astralObject) {
+
+        String jsonBody;
+        try {
+            ObjectMapper jsonMapper = new ObjectMapper();
+            jsonBody = jsonMapper.writeValueAsString(astralObject);
+        } catch (JsonProcessingException e) {
+            throw new IllegalArgumentException("Could not parse astralObject: " + astralObject);
+        }
+
+        return HttpRequest.newBuilder()
+            .uri(API_ROOT.resolve(astralObject.endpoint()))
+            .header("Content-Type", "application/json")
+            .POST(HttpRequest.BodyPublishers.ofString(jsonBody))
+            .build();
     }
 
     /**
@@ -64,60 +111,48 @@ public class MegaverseConnection {
      * @return a {@link CompletableFuture} representing the eventual completion of the HTTP request,
      * which contains the {@link HttpResponse} or a failure.
      */
-    private CompletableFuture<HttpResponse<String>> sendWithRetries(HttpClient httpClient, HttpRequest request) {
+    CompletableFuture<HttpResponse<String>> sendWithRetries(HttpClient httpClient, HttpRequest request) {
 
         CompletableFuture<HttpResponse<String>> futureResponse = httpClient.sendAsync(request, HttpResponse.BodyHandlers.ofString())
             .whenCompleteAsync(MegaverseConnection::tooManyRequestsHandler);
 
+        double exponentialDelay = MIN_RETRY_DELAY_MS;
         for (int i = 0; i < MAX_RETRIES; ++i) {
+            final int tryNumber = i + 1;
             futureResponse = futureResponse.exceptionallyComposeAsync(
-                _ -> {
-                    System.out.println("Retrying... " + request);
+                error -> {
+                    System.out.println("RETRY (" + tryNumber + "/" + MAX_RETRIES + ") " + request + " <- " + LoggingUtils.extractBodyFromRequest(request));
                     return httpClient.sendAsync(request, HttpResponse.BodyHandlers.ofString())
                         .whenCompleteAsync(MegaverseConnection::tooManyRequestsHandler);
                 },
                 //Random delay for each retry
-                CompletableFuture.delayedExecutor(MIN_RETRY_DELAY_MS + Math.round(MIN_RETRY_DELAY_MS * Math.random()), TimeUnit.MILLISECONDS));
+                CompletableFuture.delayedExecutor(Math.round(MIN_RETRY_DELAY_MS + exponentialDelay * Math.random()), TimeUnit.MILLISECONDS));
+            exponentialDelay *= 1.2;
         }
 
         return futureResponse;
     }
 
-    /**
-     * Publishes the provided astral object by sending an HTTP POST request with the object's data serialized as JSON.
-     * This method constructs the HTTP request using the astral object's endpoint and invokes the retry logic for
-     * sending the request asynchronously.
-     *
-     * @param httpClient   the {@link HttpClient} instance used to send the HTTP request asynchronously.
-     * @param astralObject the {@link AstralObject} containing the data to be published and its destination endpoint.
-     * @return a {@link CompletableFuture} that represents the eventual completion of the HTTP request,
-     * containing the {@link HttpResponse} with the server's response or an exceptional state if the request fails.
-     * @throws IllegalArgumentException if the astral object cannot be serialized to JSON.
-     */
-    private CompletableFuture<HttpResponse<String>> publishAstralObject(HttpClient httpClient, AstralObject astralObject) {
+    Megaverse buildMegaverse(String[][] goalMatrix) {
 
-        String jsonBody;
-        try {
-            ObjectMapper jsonMapper = new ObjectMapper();
-            jsonBody = jsonMapper.writeValueAsString(astralObject);
-        } catch (JsonProcessingException e) {
-            throw new IllegalArgumentException("Could not parse astralObject: " + astralObject);
+        SpaceCell[][] spaceCells = new SpaceCell[goalMatrix.length][];
+        Megaverse megaverse = new Megaverse(candidateId, spaceCells);
+
+        for (int i = 0; i < goalMatrix.length; ++i) {
+            spaceCells[i] = new SpaceCell[goalMatrix[i].length];
+            for (int j = 0; j < goalMatrix[i].length; ++j) {
+                spaceCells[i][j] = new SpaceCell(megaverse, i, j).fillFromString(goalMatrix[i][j]);
+            }
         }
 
-        HttpRequest request = HttpRequest.newBuilder()
-            .uri(API_ROOT.resolve(astralObject.endpoint()))
-            .header("Content-Type", "application/json")
-            .POST(HttpRequest.BodyPublishers.ofString(jsonBody))
-            .build();
-
-        return sendWithRetries(httpClient, request);
+        return megaverse;
     }
 
     /**
      * Publishes the state of all astral objects within a given Megaverse. This method iterates
      * over each {@link SpaceCell} in the Megaverse, identifies cells with astral objects, and
      * attempts to publish the objects to their respective endpoints using the helper method
-     * {@code publishWithRetry}.
+     * {@code sendWithRetries}.
      *
      * @param megaverse the {@link Megaverse} instance containing the space cells and astral objects to be published.
      * @throws InterruptedException if interrupted while waiting for the publishing process to complete.
@@ -125,26 +160,28 @@ public class MegaverseConnection {
      */
     public void publishState(@NonNull Megaverse megaverse) throws InterruptedException, IOException {
 
-        LinkedList<CompletableFuture<HttpResponse<String>>> allPublishResults = new LinkedList<>();
+        try (HttpClient httpClient = buildHttpClient()) {
 
-        try (HttpClient httpClient = HttpClient.newBuilder()
-            .followRedirects(HttpClient.Redirect.NORMAL)
-            .build()) {
+            LinkedList<CompletableFuture<HttpResponse<String>>> allPublishResults = new LinkedList<>();
 
             for (SpaceCell[] row : megaverse.spaceCells()) {
                 for (SpaceCell cell : row) {
-                    cell.getAstralObject().ifPresent(
-                        astralObject -> allPublishResults.add(publishAstralObject(httpClient, astralObject)));
+                    cell.getAstralObject().ifPresent(astralObject ->
+                        allPublishResults.add(sendWithRetries(httpClient, buildPOSTRequest(astralObject))));
                 }
             }
 
-            // Forces waiting for all the results and throws an exception if there was some failure
-            CompletableFuture.allOf(allPublishResults.toArray(new CompletableFuture[0])).get();
+            // Wait and check all results that didn't return 2xx
+            List<HttpResponse<String>> failedResponses = allPublishResults.stream()
+                .map(CompletableFuture::join)
+                .filter(result -> result.statusCode() / 100 != 2)
+                .toList();
 
-        } catch (ExecutionException e) {
-            String errorMsg = "Failed to publish all astral objects: " + e.getLocalizedMessage();
-            System.err.println(errorMsg);
-            throw new IOException(errorMsg, e.getCause());
+            if (!failedResponses.isEmpty()) {
+                throw new IOException("Failed to publish all astral objects: " + failedResponses);
+            }
+        } catch (CompletionException e) {
+            throw new IOException("Failed to publish all astral objects due to errors.", e.getCause());
         }
     }
 
@@ -159,16 +196,12 @@ public class MegaverseConnection {
      */
     public @NonNull Megaverse readGoal() throws InterruptedException, IOException {
 
-        try (HttpClient httpClient = HttpClient.newBuilder()
-            .followRedirects(HttpClient.Redirect.NORMAL)
-            .build()) {
+        try (HttpClient httpClient = buildHttpClient()) {
 
-            HttpRequest request = HttpRequest.newBuilder()
-                .uri(API_ROOT.resolve(String.format(GOAL_ENDPOINT_FORMAT, candidateId)))
-                .build();
+            HttpRequest request = buildGoalRequest();
 
-            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-            if (response.statusCode() >= 400) {
+            HttpResponse<String> response = sendWithRetries(httpClient, request).join();
+            if (response.statusCode() / 100 != 2) {
                 throw new IOException("Error HTTP response: " + response + " -> " + response.body());
             }
 
@@ -176,19 +209,7 @@ public class MegaverseConnection {
             Map<String, String[][]> goalMap = jsonMapper.readValue(response.body(), new TypeReference<>() {
             });
 
-            String[][] goalMatrix = goalMap.get("goal");
-
-            SpaceCell[][] spaceCells = new SpaceCell[goalMatrix.length][];
-            Megaverse megaverse = new Megaverse(candidateId, spaceCells);
-
-            for (int i = 0; i < goalMatrix.length; ++i) {
-                spaceCells[i] = new SpaceCell[goalMatrix[i].length];
-                for (int j = 0; j < goalMatrix[i].length; ++j) {
-                    spaceCells[i][j] = new SpaceCell(megaverse, i, j).fillFromString(goalMatrix[i][j]);
-                }
-            }
-
-            return megaverse;
+            return buildMegaverse(goalMap.get("goal"));
         }
     }
 }

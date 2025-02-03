@@ -28,6 +28,6 @@ public class Soloon extends AstralObject {
 
     @Override
     public String toString() {
-        return String.format("%-13s", color + "_" + OBJECT_NAME);
+        return String.format("%-13s", color.toString().toUpperCase() + "_" + OBJECT_NAME);
     }
 }

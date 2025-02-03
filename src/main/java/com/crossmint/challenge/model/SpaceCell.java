@@ -7,6 +7,11 @@ import lombok.NonNull;
 
 import java.util.Optional;
 
+/**
+ * Represents a single cell within a two-dimensional megaverse structure.
+ * Each SpaceCell holds positional information (row and column) and can optionally contain an astral object.
+ * SpaceCells are contextually tied to a specific {@link Megaverse}.
+ */
 @Getter
 @JsonInclude(JsonInclude.Include.NON_EMPTY)
 public class SpaceCell {
