@@ -1,4 +1,4 @@
-# Project Name
+# Crossmint Challenge: Jose M. Fernandez-Alba
 
 ## Description
 
