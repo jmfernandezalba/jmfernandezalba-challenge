@@ -48,7 +48,7 @@ public class MegaverseConnectionTest {
     }
 
     @Test
-    public void testPublishStatePostsCorrectly() throws IOException {
+    public void testPublishStatePostsCorrectly() throws IOException, InterruptedException {
         // Arrange: Define the input parameters and mocks.
         Megaverse dummyMegaverse = buildDummyMegaverse();
         AstralObject dummyObject = dummyMegaverse.spaceCells()[0][1].getAstralObject().orElse(null);
@@ -89,7 +89,7 @@ public class MegaverseConnectionTest {
     }
 
     @Test
-    public void testPublishStateRetriesOnError() throws IOException {
+    public void testPublishStateRetriesOnError() throws IOException, InterruptedException {
         // Arrange: Define the input parameters and mocks.
         Megaverse dummyMegaverse = buildDummyMegaverse();
         AstralObject dummyObject = dummyMegaverse.spaceCells()[0][1].getAstralObject().orElse(null);
@@ -113,7 +113,7 @@ public class MegaverseConnectionTest {
     }
 
     @Test
-    public void testPublishStateRetriesOn429Error() throws IOException {
+    public void testPublishStateRetriesOn429Error() throws IOException, InterruptedException {
         // Arrange: Define the input parameters and mocks.
         Megaverse dummyMegaverse = buildDummyMegaverse();
         AstralObject dummyObject = dummyMegaverse.spaceCells()[0][1].getAstralObject().orElse(null);
