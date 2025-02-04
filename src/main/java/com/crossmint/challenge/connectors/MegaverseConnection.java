@@ -18,8 +18,9 @@ import java.net.http.HttpResponse;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.CompletionException;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -36,6 +37,7 @@ public class MegaverseConnection {
     public static final URI API_ROOT = URI.create("https://challenge.crossmint.io/api/");
     public static final String GOAL_ENDPOINT_FORMAT = "map/%s/goal";
 
+    public static final int INITIAL_DELAY_MS = 900;
     public static final int MAX_RETRIES = 10;
     public static final int MIN_RETRY_DELAY_MS = 8000;
     @NonNull
@@ -112,7 +114,9 @@ public class MegaverseConnection {
      * @return a {@link CompletableFuture} representing the eventual completion of the HTTP request,
      * which contains the {@link HttpResponse} or a failure.
      */
-    CompletableFuture<HttpResponse<String>> sendWithRetries(HttpClient httpClient, HttpRequest request) {
+    CompletableFuture<HttpResponse<String>> sendWithRetries(HttpClient httpClient, HttpRequest request) throws InterruptedException {
+
+        Thread.sleep(INITIAL_DELAY_MS);
 
         CompletableFuture<HttpResponse<String>> futureResponse = httpClient.sendAsync(request, HttpResponse.BodyHandlers.ofString())
             .whenCompleteAsync(MegaverseConnection::tooManyRequestsHandler);
@@ -158,7 +162,7 @@ public class MegaverseConnection {
      * @param megaverse the {@link Megaverse} instance containing the space cells and astral objects to be published.
      * @throws IOException          if a failure occurs during the publishing process or if the HTTP client fails.
      */
-    public void publishState(@NonNull Megaverse megaverse) throws IOException {
+    public void publishState(@NonNull Megaverse megaverse) throws IOException, InterruptedException {
 
         try (HttpClient httpClient = buildHttpClient()) {
 
@@ -166,12 +170,17 @@ public class MegaverseConnection {
 
             for (SpaceCell[] row : megaverse.spaceCells()) {
                 for (SpaceCell cell : row) {
-                    cell.getAstralObject().ifPresent(astralObject ->
-                        allPublishResults.add(sendWithRetries(httpClient, buildPOSTRequest(astralObject))));
+                    Optional<AstralObject> optAstralObject = cell.getAstralObject();
+                    if (optAstralObject.isPresent()) {
+                        allPublishResults.add(sendWithRetries(httpClient, buildPOSTRequest(optAstralObject.get())));
+                    }
                 }
             }
 
-            // Wait and check all results that didn't return 2xx
+            // Wait for all results to complete and throw exception if some completed exceptionally.
+            CompletableFuture.allOf(allPublishResults.toArray(CompletableFuture[]::new)).get();
+
+            // Check all results that didn't return 2xx
             List<HttpResponse<String>> failedResponses = allPublishResults.stream()
                 .map(CompletableFuture::join)
                 .filter(result -> result.statusCode() / 100 != 2)
@@ -180,7 +189,7 @@ public class MegaverseConnection {
             if (!failedResponses.isEmpty()) {
                 throw new IOException("Failed to publish all astral objects: " + failedResponses);
             }
-        } catch (CompletionException e) {
+        } catch (ExecutionException e) {
             throw new IOException("Failed to publish all astral objects due to errors.", e.getCause());
         }
     }
@@ -193,7 +202,7 @@ public class MegaverseConnection {
      * @return a {@link Megaverse} instance built from the retrieved goal matrix.
      * @throws IOException          if an I/O error occurs during the HTTP request or while processing the response.
      */
-    public @NonNull Megaverse readGoal() throws IOException {
+    public @NonNull Megaverse readGoal() throws IOException, InterruptedException {
 
         try (HttpClient httpClient = buildHttpClient()) {
 

@@ -24,7 +24,7 @@ public class Main {
             System.out.println(megaverse);
             connection.publishState(megaverse);
             System.out.println("Megaverse published successfully.");
-        } catch (IOException e) {
+        } catch (IOException | InterruptedException e) {
             System.err.println("Failed to execute the challenge: " + e.getLocalizedMessage());
         }
 
